@@ -5,9 +5,7 @@
 [![OneBot](https://img.shields.io/badge/OneBot-V11-black.svg)](https://onebot.dev/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
 [![CI](https://github.com/qianxuu/nonebot-plugin-douyin/actions/workflows/ci.yml/badge.svg)](https://github.com/qianxuu/nonebot-plugin-douyin/actions/workflows/ci.yml)
-<!-- 发布到 PyPI 后可取消下一行注释
 [![PyPI](https://img.shields.io/pypi/v/nonebot-plugin-douyin.svg)](https://pypi.org/project/nonebot-plugin-douyin/)
--->
 
 NoneBot2 插件：自动识别聊天中的抖音链接，下载后发送视频，或直接发送图文 / Live Photo。
 
