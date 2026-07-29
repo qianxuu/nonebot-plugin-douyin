@@ -68,18 +68,17 @@ class DownloadChunkTests(IsolatedAsyncioTestCase):
 
 
 class DownloadTests(IsolatedAsyncioTestCase):
-    async def test_download_skips_when_content_length_missing(self):
+    async def test_download_skips_when_size_invalid(self):
         cache_dir = Path('cache/douyin-test-missing')
         with (
             mock.patch.object(download_mod, '_CACHE_DIR', cache_dir),
-            mock.patch.object(download_mod, 'get_content_length', mock.AsyncMock(return_value=None)),
             mock.patch.object(download_mod, '_prune_cache'),
         ):
             if cache_dir.exists():
                 for p in cache_dir.iterdir():
                     p.unlink()
                 cache_dir.rmdir()
-            result = await download('miss', 'https://example.com/a.mp4')
+            result = await download('miss', 'https://example.com/a.mp4', 0)
         self.assertIsNone(result)
 
     async def test_download_success_writes_file(self):
@@ -89,19 +88,18 @@ class DownloadTests(IsolatedAsyncioTestCase):
             p.unlink()
 
         body = b'0123456789'
-        # 单分片：content_length 小，num_chunks=1
+        # 单分片：size 小，num_chunks=1
         session = FakeSession(FakeResponse(200, body=body))
         factory = FakeClientSessionFactory(session)
 
         with (
             mock.patch.object(download_mod, '_CACHE_DIR', cache_dir),
-            mock.patch.object(download_mod, 'get_content_length', mock.AsyncMock(return_value=len(body))),
             mock.patch.object(download_mod, '_prune_cache'),
             mock.patch.object(download_mod.aiohttp, 'ClientSession', factory),
             mock.patch.object(download_mod.aiohttp, 'TCPConnector', mock.Mock(return_value=mock.Mock())),
             mock.patch.object(download_mod.aiohttp, 'ClientTimeout', mock.Mock(return_value=mock.Mock())),
         ):
-            result = await download('ok', 'https://example.com/a.mp4')
+            result = await download('ok', 'https://example.com/a.mp4', len(body))
 
         self.assertIsNotNone(result)
         assert result is not None
@@ -116,14 +114,10 @@ class DownloadTests(IsolatedAsyncioTestCase):
         file_path = cache_dir / 'cached.mp4'
         file_path.write_bytes(b'cached')
 
-        with (
-            mock.patch.object(download_mod, '_CACHE_DIR', cache_dir),
-            mock.patch.object(download_mod, 'get_content_length', mock.AsyncMock()) as get_len,
-        ):
-            result = await download('cached', 'https://example.com/a.mp4')
+        with mock.patch.object(download_mod, '_CACHE_DIR', cache_dir):
+            result = await download('cached', 'https://example.com/a.mp4', 6)
 
         self.assertEqual(result, file_path)
-        get_len.assert_not_called()
         file_path.unlink()
         cache_dir.rmdir()
 
@@ -139,13 +133,12 @@ class DownloadTests(IsolatedAsyncioTestCase):
 
         with (
             mock.patch.object(download_mod, '_CACHE_DIR', cache_dir),
-            mock.patch.object(download_mod, 'get_content_length', mock.AsyncMock(return_value=10)),
             mock.patch.object(download_mod, '_prune_cache'),
             mock.patch.object(download_mod.aiohttp, 'ClientSession', factory),
             mock.patch.object(download_mod.aiohttp, 'TCPConnector', mock.Mock(return_value=mock.Mock())),
             mock.patch.object(download_mod.aiohttp, 'ClientTimeout', mock.Mock(return_value=mock.Mock())),
         ):
-            result = await download('bad', 'https://example.com/a.mp4')
+            result = await download('bad', 'https://example.com/a.mp4', 10)
 
         self.assertIsNone(result)
         self.assertFalse((cache_dir / 'bad.mp4').exists())

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from nonebot import logger
 
 from .utils import bytes_to_mib, extract_aweme_id
-from .client import resolve_url, get_aweme_detail, get_content_length
+from .client import resolve_url, get_aweme_detail
 from .config import DOUYIN_MAX_VIDEO_SIZE
 from .download import get_cache_file_path
 
@@ -52,14 +52,16 @@ async def get_aweme_info(url: str) -> AwemeInfo | None:
             logger.warning(f'{_TAG} 未提取到可发送媒体: {url}')
             return None
 
-        await _fill_video_stream_meta(aweme_id, items)
+        _fill_video_stream_meta(aweme_id, items)
         return AwemeInfo(aweme_id=aweme_id, items=items)
     except Exception as e:
         logger.error(f'{_TAG} 作品信息获取失败: {url} - {e}')
         return None
 
 
-async def _fill_video_stream_meta(aweme_id: str, items: list[MediaItem]) -> None:
+def _fill_video_stream_meta(aweme_id: str, items: list[MediaItem]) -> None:
+    """用 API 返回的 data_size 标记过大视频；已缓存则跳过下载。"""
+
     video_items = [item for item in items if item.type == 'video']
     if not video_items:
         return
@@ -69,12 +71,26 @@ async def _fill_video_stream_meta(aweme_id: str, items: list[MediaItem]) -> None
         cache_name = video_cache_name(aweme_id, item, pure_video=pure_video)
         cache_file_path = get_cache_file_path(cache_name)
         if cache_file_path.exists():
-            logger.info(f'{_TAG} 视频已缓存，跳过获取视频流信息: {cache_name}')
+            logger.info(f'{_TAG} 视频已缓存，跳过下载: {cache_name}')
             item.skip_download = True
             item.skip_reason = '视频已缓存'
             continue
 
-        await _probe_video_stream(aweme_id, item)
+        size = item.size
+        if size is None or size <= 0:
+            logger.error(f'{_TAG} 视频流缺少 data_size: {aweme_id}')
+            item.skip_download = True
+            item.skip_reason = '视频流信息获取失败'
+            continue
+
+        if size > DOUYIN_MAX_VIDEO_SIZE:
+            logger.info(f'{_TAG} 视频过大: {aweme_id} - {bytes_to_mib(size):.2f} MiB')
+            item.skip_download = True
+            item.skip_reason = '视频大小超过限制'
+            continue
+
+        item.skip_download = False
+        item.skip_reason = None
 
 
 def video_cache_name(aweme_id: str, item: MediaItem, *, pure_video: bool) -> str:
@@ -83,26 +99,6 @@ def video_cache_name(aweme_id: str, item: MediaItem, *, pure_video: bool) -> str
     if pure_video:
         return aweme_id
     return f'{aweme_id}_{item.index}'
-
-
-async def _probe_video_stream(aweme_id: str, item: MediaItem) -> None:
-    """探测视频大小，过大则标记跳过下载"""
-
-    try:
-        size = await get_content_length(item.url)
-        item.size = size
-        if size is not None and size > DOUYIN_MAX_VIDEO_SIZE:
-            logger.info(f'{_TAG} 视频过大: {aweme_id} - {bytes_to_mib(size):.2f} MiB')
-            item.skip_download = True
-            item.skip_reason = '视频大小超过限制'
-            return
-
-        item.skip_download = False
-        item.skip_reason = None
-    except Exception as e:
-        logger.error(f'{_TAG} 视频流信息获取失败: {aweme_id} - {e}')
-        item.skip_download = True
-        item.skip_reason = '视频流信息获取失败'
 
 
 async def _resolve_aweme_id(url: str) -> str:
@@ -131,10 +127,11 @@ def _extract_media_items(detail: dict) -> list[MediaItem]:
     if not isinstance(video, dict):
         return []
 
-    play_url = _extract_video_url(video)
-    if play_url is None:
+    stream = _extract_video_stream(video)
+    if stream is None:
         return []
-    return [MediaItem(type='video', url=play_url, index=0)]
+    url, size = stream
+    return [MediaItem(type='video', url=url, index=0, size=size)]
 
 
 def _extract_from_images(images: list) -> list[MediaItem]:
@@ -145,9 +142,10 @@ def _extract_from_images(images: list) -> list[MediaItem]:
 
         video = image.get('video')
         if isinstance(video, dict):
-            play_url = _extract_video_url(video)
-            if play_url is not None:
-                items.append(MediaItem(type='video', url=play_url, index=index))
+            stream = _extract_video_stream(video)
+            if stream is not None:
+                url, size = stream
+                items.append(MediaItem(type='video', url=url, index=index, size=size))
                 continue
 
         image_url = _extract_image_url(image)
@@ -172,8 +170,11 @@ def _extract_image_url(image: dict) -> str | None:
     return str_urls[0]
 
 
-def _extract_video_url(video: dict) -> str | None:
-    """从 bit_rate 选流：优先 h265/bytevc1 中 data_size 最大，否则全体 data_size 最大。"""
+def _extract_video_stream(video: dict) -> tuple[str, int | None] | None:
+    """从 bit_rate 选流：优先 h265/bytevc1 中 data_size 最大，否则全体 data_size 最大。
+
+    返回 (url, data_size)。data_size 缺失时为 None。
+    """
 
     bit_rate_list = video.get('bit_rate')
     if not isinstance(bit_rate_list, list) or not bit_rate_list:
@@ -185,7 +186,18 @@ def _extract_video_url(video: dict) -> str | None:
         return None
 
     best = max(candidates, key=_bit_rate_data_size)
-    return _play_addr_url(best)
+    url = _play_addr_url(best)
+    if url is None:
+        return None
+    size = _bit_rate_data_size(best)
+    return url, size if size >= 0 else None
+
+
+def _extract_video_url(video: dict) -> str | None:
+    """兼容旧调用：仅返回流地址。"""
+
+    stream = _extract_video_stream(video)
+    return stream[0] if stream is not None else None
 
 
 def _is_h265_item(item: dict) -> bool:

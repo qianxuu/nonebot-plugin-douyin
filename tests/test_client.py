@@ -1,8 +1,8 @@
 from unittest import IsolatedAsyncioTestCase, mock
 
-from tests.fakes import FakeSession, FakeResponse, FakeClientSessionFactory
+from tests.fakes import FakeSession, FakeResponse
 from nonebot_plugin_douyin import client as client_mod
-from nonebot_plugin_douyin.client import resolve_url, close_client, get_aweme_detail, get_content_length
+from nonebot_plugin_douyin.client import resolve_url, close_client, get_aweme_detail
 
 
 class ResolveUrlTests(IsolatedAsyncioTestCase):
@@ -72,36 +72,6 @@ class GetAwemeDetailTests(IsolatedAsyncioTestCase):
 
         self.assertIsNone(detail)
         self.assertEqual(len(session.get_calls), 5)
-
-
-class GetContentLengthTests(IsolatedAsyncioTestCase):
-    async def test_parses_content_range_on_206(self):
-        session = FakeSession(FakeResponse(206, headers={'Content-Range': 'bytes 0-0/12345'}, body=b'x'))
-        factory = FakeClientSessionFactory(session)
-
-        with mock.patch.object(client_mod.aiohttp, 'ClientSession', factory):
-            size = await get_content_length('https://example.com/a.mp4')
-
-        self.assertEqual(size, 12345)
-        self.assertEqual(session.get_calls[0]['headers']['Range'], 'bytes=0-0')
-
-    async def test_parses_content_length_on_200(self):
-        session = FakeSession(FakeResponse(200, headers={'Content-Length': '99'}, body=b'x'))
-        factory = FakeClientSessionFactory(session)
-
-        with mock.patch.object(client_mod.aiohttp, 'ClientSession', factory):
-            size = await get_content_length('https://example.com/a.mp4')
-
-        self.assertEqual(size, 99)
-
-    async def test_returns_none_when_headers_missing(self):
-        session = FakeSession(FakeResponse(200, headers={}, body=b'x'))
-        factory = FakeClientSessionFactory(session)
-
-        with mock.patch.object(client_mod.aiohttp, 'ClientSession', factory):
-            size = await get_content_length('https://example.com/a.mp4')
-
-        self.assertIsNone(size)
 
 
 class CloseClientTests(IsolatedAsyncioTestCase):

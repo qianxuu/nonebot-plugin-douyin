@@ -9,7 +9,7 @@ import aiohttp
 from nonebot import logger
 
 from .utils import KeyedLock, bytes_to_mib, bytes_to_mibps
-from .client import HEADERS, get_content_length
+from .client import HEADERS
 from .config import DOUYIN_CACHE_RETENTION_SECONDS
 
 _TAG = '[抖音下载]'
@@ -82,8 +82,8 @@ async def _download_chunk(session: aiohttp.ClientSession, url: str, start: int, 
     raise RuntimeError(f'分片下载失败: {start}-{end}')
 
 
-async def download(name: str, url: str) -> Path | None:
-    """下载资源到本地缓存，name 用于缓存文件名（不含后缀时默认 .mp4）"""
+async def download(name: str, url: str, size: int) -> Path | None:
+    """下载资源到本地缓存。size 来自作品详情 bit_rate.play_addr.data_size。"""
 
     async with _DOWNLOAD_LOCK(name):
         _CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -95,11 +95,11 @@ async def download(name: str, url: str) -> Path | None:
 
         _prune_cache(_CACHE_DIR)
 
-        content_length = await get_content_length(url)
-        if content_length is None:
-            logger.error(f'{_TAG} {name} 获取 Content-Length 失败，跳过下载')
+        if size <= 0:
+            logger.error(f'{_TAG} {name} 无效文件大小: {size}，跳过下载')
             return None
 
+        content_length = size
         num_chunks = _calculate_chunk_count(content_length)
         logger.info(f'{_TAG} {name} 开始: {bytes_to_mib(content_length):.2f} MiB, {num_chunks} 连接')
         t_start = time.monotonic()

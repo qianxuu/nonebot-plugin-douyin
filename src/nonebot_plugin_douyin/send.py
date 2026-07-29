@@ -151,7 +151,11 @@ async def _prepare_video_file(aweme_id: str, item: MediaItem, *, pure_video: boo
         logger.warning(f'{_TAG} 缺少视频流地址: {cache_name}')
         return None
 
-    return await download(cache_name, item.url)
+    if item.size is None or item.size <= 0:
+        logger.warning(f'{_TAG} 缺少视频大小: {cache_name}')
+        return None
+
+    return await download(cache_name, item.url, item.size)
 
 
 async def _resolve_video_ref(bot: Bot, file_path: Path) -> str:

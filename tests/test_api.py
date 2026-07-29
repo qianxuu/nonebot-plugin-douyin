@@ -9,8 +9,8 @@ from nonebot_plugin_douyin.api import (
     _resolve_aweme_id,
     _extract_image_url,
     _extract_video_url,
-    _probe_video_stream,
     _extract_media_items,
+    _fill_video_stream_meta,
 )
 
 
@@ -79,12 +79,15 @@ class ExtractMediaTests(IsolatedAsyncioTestCase):
         self.assertEqual(items[0].url, 'https://example.com/live0-large.mp4')
         self.assertEqual(items[1].url, 'https://example.com/live1-h265.mp4')
         self.assertEqual([item.index for item in items], [0, 1])
+        self.assertEqual(items[0].size, 500)
+        self.assertEqual(items[1].size, 200)
 
     def test_extract_media_items_from_video(self):
         items = _extract_media_items(VIDEO_DETAIL)
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0].type, 'video')
         self.assertEqual(items[0].url, 'https://example.com/h265-1080.mp4')
+        self.assertEqual(items[0].size, 2500)
 
     def test_extract_media_items_returns_empty_without_media(self):
         self.assertEqual(_extract_media_items({'aweme_id': 'x'}), [])
@@ -106,13 +109,8 @@ class GetAwemeInfoTests(IsolatedAsyncioTestCase):
             self.assertEqual(aweme_id, '1234567890')
             return VIDEO_DETAIL
 
-        async def fake_get_content_length(url: str):
-            self.assertEqual(url, 'https://example.com/h265-1080.mp4')
-            return 1024
-
         with (
             mock.patch('nonebot_plugin_douyin.api.get_aweme_detail', fake_get_aweme_detail),
-            mock.patch('nonebot_plugin_douyin.api.get_content_length', fake_get_content_length),
             mock.patch('nonebot_plugin_douyin.api.get_cache_file_path') as get_cache_file_path,
         ):
             get_cache_file_path.return_value.exists.return_value = False
@@ -124,7 +122,7 @@ class GetAwemeInfoTests(IsolatedAsyncioTestCase):
         self.assertEqual(info.items[0].type, 'video')
         self.assertEqual(info.items[0].url, 'https://example.com/h265-1080.mp4')
         self.assertFalse(info.items[0].skip_download)
-        self.assertEqual(info.items[0].size, 1024)
+        self.assertEqual(info.items[0].size, 2500)
 
     async def test_returns_images(self):
         async def fake_get_aweme_detail(_aweme_id: str):
@@ -183,38 +181,35 @@ class GetAwemeInfoTests(IsolatedAsyncioTestCase):
         log.info.assert_called()
 
 
-class ProbeVideoStreamTests(IsolatedAsyncioTestCase):
-    async def test_probe_skips_large_video(self):
-        item = MediaItem(type='video', url='https://example.com/video.mp4')
+class FillVideoStreamMetaTests(IsolatedAsyncioTestCase):
+    def test_skips_large_video(self):
+        item = MediaItem(type='video', url='https://example.com/video.mp4', size=60 * 1024 * 1024)
         with (
-            mock.patch('nonebot_plugin_douyin.api.get_content_length', mock.AsyncMock(return_value=60 * 1024 * 1024)),
+            mock.patch('nonebot_plugin_douyin.api.get_cache_file_path') as get_cache_file_path,
             mock.patch('nonebot_plugin_douyin.api.DOUYIN_MAX_VIDEO_SIZE', 50 * 1024 * 1024),
         ):
-            await _probe_video_stream('123', item)
+            get_cache_file_path.return_value.exists.return_value = False
+            _fill_video_stream_meta('123', [item])
 
         self.assertTrue(item.skip_download)
         self.assertEqual(item.skip_reason, '视频大小超过限制')
         self.assertEqual(item.size, 60 * 1024 * 1024)
 
-    async def test_probe_marks_downloadable_stream(self):
-        item = MediaItem(type='video', url='https://example.com/video.mp4')
-        with mock.patch(
-            'nonebot_plugin_douyin.api.get_content_length',
-            mock.AsyncMock(return_value=10 * 1024 * 1024),
-        ):
-            await _probe_video_stream('123', item)
+    def test_marks_downloadable_stream(self):
+        item = MediaItem(type='video', url='https://example.com/video.mp4', size=10 * 1024 * 1024)
+        with mock.patch('nonebot_plugin_douyin.api.get_cache_file_path') as get_cache_file_path:
+            get_cache_file_path.return_value.exists.return_value = False
+            _fill_video_stream_meta('123', [item])
 
         self.assertFalse(item.skip_download)
         self.assertIsNone(item.skip_reason)
         self.assertEqual(item.size, 10 * 1024 * 1024)
 
-    async def test_probe_marks_failure(self):
-        item = MediaItem(type='video', url='https://example.com/video.mp4')
-        with mock.patch(
-            'nonebot_plugin_douyin.api.get_content_length',
-            mock.AsyncMock(side_effect=RuntimeError('network')),
-        ):
-            await _probe_video_stream('123', item)
+    def test_marks_missing_size_as_failure(self):
+        item = MediaItem(type='video', url='https://example.com/video.mp4', size=None)
+        with mock.patch('nonebot_plugin_douyin.api.get_cache_file_path') as get_cache_file_path:
+            get_cache_file_path.return_value.exists.return_value = False
+            _fill_video_stream_meta('123', [item])
 
         self.assertTrue(item.skip_download)
         self.assertEqual(item.skip_reason, '视频流信息获取失败')

@@ -44,35 +44,6 @@ async def close_client() -> None:
         _client = None
 
 
-async def get_content_length(url: str, timeout: int = 10) -> int | None:
-    """探测资源总大小"""
-
-    async with (
-        aiohttp.ClientSession() as session,
-        session.get(
-            url,
-            headers={**HEADERS, 'Range': 'bytes=0-0'},
-            timeout=aiohttp.ClientTimeout(total=timeout),
-            allow_redirects=True,
-        ) as resp,
-    ):
-        resp.raise_for_status()
-
-        if resp.status == 206:
-            content_range = resp.headers.get('Content-Range')
-            if content_range and '/' in content_range:
-                total = content_range.split('/')[-1]
-                if total.isdigit():
-                    return int(total)
-
-        if resp.status == 200:
-            length = resp.headers.get('Content-Length')
-            if length and length.isdigit():
-                return int(length)
-
-        return None
-
-
 async def resolve_url(url: str) -> str | None:
     """解析短链接，返回重定向地址"""
 
