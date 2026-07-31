@@ -1,6 +1,6 @@
 [project]
 name = "nonebot-plugin-douyin"
-version = "0.1.0"
+version = "0.1.1"
 description = "NoneBot2 插件：识别抖音链接并发送视频 / 图文 / Live Photo"
 readme = "README.md"
 authors = [
